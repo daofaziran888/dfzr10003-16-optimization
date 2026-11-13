@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Generic, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 T = TypeVar("T")
 
@@ -13,6 +13,7 @@ class PageResult(BaseModel, Generic[T]):
     total: int
     page: int = 1
     size: int = 20
+    actor: str | None = None
 
 
 class ActionResult(BaseModel):
@@ -22,10 +23,21 @@ class ActionResult(BaseModel):
 
 
 class EntryPayload(BaseModel):
-    """登记或修改一条业务记录时提交的字段集合。"""
+    """登记或修改一条业务记录时提交的字段集合。
+
+    前端动作接口习惯直接提交顶层字段（例如 {"action": "..."}），也兼容
+    统一放在 values 里的写法；merged() 把两种来源合并成同一份字段表。
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     values: dict[str, Any] = Field(default_factory=dict)
     remark: str | None = None
+
+    def merged(self) -> dict[str, Any]:
+        merged = dict(self.values)
+        merged.update(self.model_extra or {})
+        return merged
 
 
 

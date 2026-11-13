@@ -1,8 +1,10 @@
-"""历史重跑业务规则：状态流转、字段校验与筛选口径都收在这里。"""
+"""历史重跑业务规则：状态流转、字段校验、筛选口径与冻结标记复核。"""
 from __future__ import annotations
 
+import copy
 from typing import Any
 
+from app.services.release import release_hold_for_snapshot
 from app.store import store
 
 MODULE = "backfill"
@@ -10,6 +12,7 @@ REQUIRED_FIELDS = ["批次编号", "目标表名", "开始日期"]
 STATUS_ORDER = ["草稿", "运行中", "已暂停", "已完成"]
 ACTION_RULES = {"启动重跑": "草稿", "暂停重跑": "运行中", "归档批次": "已暂停"}
 NEGATIVE_ACTIONS = []
+ROLLBACK_ACTIONS = {"启动重跑"}
 
 
 class BackfillService:
@@ -52,6 +55,14 @@ class BackfillService:
             return None, f"重跑批次 {entry_id} 不存在或已归档"
         if action not in ACTION_RULES:
             return None, f"动作「{action}」不属于历史重跑可执行范围"
+        if action in ROLLBACK_ACTIONS:
+            # 与快照页同一冻结标记：快照已被判成可释放/已释放时，不允许再从重跑侧回滚。
+            hold = self.hold(entry)
+            if hold["冻结标记"] in {"可释放", "已释放"}:
+                return None, (
+                    f"批次 {entry.get('批次编号')} 引用的快照 {hold.get('快照编号')} "
+                    f"已标记为「{hold['冻结标记']}」，不能再执行回滚"
+                )
         target = ACTION_RULES[action]
         if target not in STATUS_ORDER:
             return None, f"目标状态「{target}」不在允许的状态序列里"
@@ -59,3 +70,16 @@ class BackfillService:
         entry["pending"] = target != STATUS_ORDER[-1]
         entry["abnormal"] = action in NEGATIVE_ACTIONS
         return entry, f"重跑批次已{action}"
+
+    def hold(self, entry: dict[str, Any]) -> dict[str, Any]:
+        """读取快照页的同一冻结标记（只读，不落地）。"""
+        return release_hold_for_snapshot(entry.get("引用快照编号"))
+
+    def list_with_holds(self, **filters: Any) -> tuple[list[dict[str, Any]], int]:
+        items, total = self.list_entries(**filters)
+        enriched = []
+        for entry in items:
+            row = copy.deepcopy(entry)
+            row["快照冻结标记"] = self.hold(entry)
+            enriched.append(row)
+        return enriched, total

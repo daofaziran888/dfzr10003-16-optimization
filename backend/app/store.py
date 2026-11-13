@@ -14,6 +14,9 @@ class Store:
         self._tables: dict[str, list[dict[str, Any]]] = {
             name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
         }
+        # 内部执行台账（清理窗口、清理批次）不属于业务模块，不出现在运营概览里。
+        # 真实项目里它们会是独立的数据表，这里用同一套内存存储保持结构一致。
+        self._internal_tables: dict[str, list[dict[str, Any]]] = {}
 
     def module_names(self) -> list[str]:
         return sorted(self._tables)
@@ -21,9 +24,18 @@ class Store:
     def rows(self, module: str) -> list[dict[str, Any]]:
         return self._tables.setdefault(module, [])
 
+    def internal_rows(self, table: str) -> list[dict[str, Any]]:
+        return self._internal_tables.setdefault(table, [])
+
     def find(self, module: str, entry_id: int) -> dict[str, Any] | None:
         for row in self.rows(module):
             if int(row.get("id", 0)) == entry_id:
+                return row
+        return None
+
+    def find_internal(self, table: str, **fields: Any) -> dict[str, Any] | None:
+        for row in self.internal_rows(table):
+            if all(row.get(key) == value for key, value in fields.items()):
                 return row
         return None
 
